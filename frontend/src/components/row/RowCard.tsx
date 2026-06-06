@@ -1,0 +1,235 @@
+import { useEffect, useRef, useState } from 'react';
+import { RowDTO } from '@/api/types';
+import { api, imageUrl } from '@/api/client';
+import { Badge } from '@/components/common/Badge';
+import { Button } from '@/components/common/Button';
+import { Play, Trash2, Copy, Image as ImageIcon, Settings2, FolderOpen, StopCircle, Files, Paperclip, XCircle } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { RowSettingsOverride } from './RowSettingsOverride';
+import { ImageLightbox } from '@/components/dialogs/ImageLightbox';
+
+const generateId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).slice(2);
+};
+
+interface RowCardProps {
+  row: RowDTO;
+  index: number;
+}
+
+export function RowCard({ row, index }: RowCardProps) {
+  const [prompt, setPrompt] = useState(row.prompt || "");
+  const [tags, setTags] = useState((row.tags || []).join(", "));
+  const [showSettings, setShowSettings] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (document.activeElement !== promptRef.current) {
+      setPrompt(row.prompt || "");
+    }
+  }, [row.prompt]);
+  useEffect(() => { setTags((row.tags || []).join(", ")); }, [row.tags]);
+
+  const handleBlurPrompt = () => { if (prompt !== row.prompt) api.updateRow(row.id, { prompt }); };
+  const handleBlurTags = () => { api.updateRow(row.id, { tags: tags.split(',').map(t => t.trim()).filter(Boolean) }); };
+
+  const handleGenerate = async () => { 
+    await api.updateRow(row.id, { prompt }); 
+    await api.generateRows([row.id]); 
+    queryClient.invalidateQueries({ queryKey: ['state'] }); 
+  };
+  const handleStop = async () => { await api.stopAll(); }; 
+  const handleDelete = async () => { if (confirm("Delete?")) { await api.deleteRows([row.id]); queryClient.invalidateQueries({ queryKey: ['state'] }); }};
+  const handleDuplicate = async () => { await api.duplicateRow(row.id); queryClient.invalidateQueries({ queryKey: ['state'] }); };
+  const handleCopyImage = async () => {
+    if (!displayImage) return;
+    const res = await api.copyImage(displayImage.file_path);
+    if (res.copied) {
+      // Simple feedback; ideally replace with toast
+      alert("Image copied to clipboard");
+    }
+  };
+
+  const handleAddAttachment = async () => {
+    const res = await api.selectImageFile();
+    if (res) {
+      const newAtt = {
+        id: generateId(),
+        file_path: res.path,
+        mime_type: res.mime,
+      };
+      const updated = [...(row.attachments || []), newAtt];
+      await api.updateRow(row.id, { attachments: updated });
+      queryClient.invalidateQueries({ queryKey: ['state'] });
+    }
+  };
+
+  const removeAttachment = async (attId: string) => {
+    const updated = (row.attachments || []).filter((a) => a.id !== attId);
+    await api.updateRow(row.id, { attachments: updated });
+    queryClient.invalidateQueries({ queryKey: ['state'] });
+  };
+
+  const displayImage = row.images.length > 0 ? row.images[row.images.length - 1] : null;
+
+  return (
+    <>
+    <div className={`group relative bg-surface/40 hover:bg-surface/60 border ${row.selected ? 'border-primary/50 bg-primary/5' : 'border-white/5'} rounded-lg p-4 transition-all duration-200`}>
+      <div className="flex gap-4">
+        {/* 1. Left Controls */}
+        <div className="flex flex-col items-center gap-3 pt-1">
+            <span className="text-xs font-mono text-text-muted opacity-50">{index}</span>
+            <input 
+                type="checkbox" 
+                checked={row.selected}
+                onChange={(e) => { api.updateRow(row.id, { selected: e.target.checked }); queryClient.invalidateQueries({ queryKey: ['state'] }); }}
+                className="rounded border-white/20 bg-black/20 text-primary cursor-pointer w-4 h-4"
+            />
+        </div>
+
+        {/* 2. Main Input Area */}
+        <div className="flex-1 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+                <div className="flex gap-2 items-center">
+                    <Badge status={row.status} />
+                    {row.images.length > 0 && <span className="text-xs bg-white/10 px-1.5 py-0.5 rounded text-text-muted">{row.images.length} images</span>}
+                </div>
+                {row.error_message && <span className="text-xs text-red-400 truncate max-w-xs">{row.error_message}</span>}
+            </div>
+            
+            <div className="relative">
+                <textarea
+                    ref={promptRef}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    onBlur={handleBlurPrompt}
+                    placeholder="Enter prompt..."
+                    className="w-full bg-black/20 rounded-md border border-white/5 focus:border-primary/50 focus:ring-1 focus:ring-primary/50 p-3 text-sm font-mono text-text-main resize-none h-24 transition-all placeholder:text-text-muted/30 pr-16"
+                />
+                <span className="absolute bottom-2 right-2 text-[10px] text-white/20 pointer-events-none">
+                    {prompt.length} chars
+                </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+                <input 
+                    value={tags}
+                    onChange={(e) => setTags(e.target.value)}
+                    onBlur={handleBlurTags}
+                    placeholder="Tags (comma separated)..."
+                    className="flex-1 bg-transparent border-b border-white/5 focus:border-white/20 text-xs py-1 px-1 outline-none text-text-muted focus:text-text-main transition-colors"
+                />
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-1">
+                {(row.attachments || []).map((att) => (
+                    <div
+                        key={att.id}
+                        className="relative group bg-white/5 rounded px-2 py-1 flex items-center gap-2 border border-white/10"
+                    >
+                        <span className="text-xs text-text-muted max-w-[120px] truncate">
+                            {att.file_path.split(/[/\\]/).pop()}
+                        </span>
+                        <button
+                            onClick={() => removeAttachment(att.id)}
+                            className="text-white/30 hover:text-red-400 transition-colors"
+                            title="Remove attachment"
+                        >
+                            <XCircle size={12} />
+                        </button>
+                    </div>
+                ))}
+            </div>
+            
+            {/* Toolbar - Complete feature set */}
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                {row.status === 'Generating' || row.status === 'Queued' ? (
+                    <Button size="sm" variant="danger" onClick={handleStop}>
+                        <StopCircle size={14} className="mr-2" /> Stop
+                    </Button>
+                ) : (
+                    <Button size="sm" onClick={handleGenerate}>
+                        <Play size={14} className="mr-2" /> {row.images.length > 0 ? "Regenerate" : "Generate"}
+                    </Button>
+                )}
+                
+                <div className="h-4 w-px bg-white/10 mx-1" />
+
+                <Button size="sm" variant={showSettings ? "secondary" : "ghost"} onClick={() => setShowSettings(!showSettings)} title="Row Settings">
+                    <Settings2 size={14} />
+                </Button>
+                <Button size="sm" variant="ghost" title="Attach Image" onClick={handleAddAttachment}>
+                    <Paperclip size={14} className={row.attachments?.length ? "text-primary" : ""} />
+                </Button>
+                <Button size="sm" variant="ghost" title="Duplicate Row" onClick={handleDuplicate}>
+                    <Files size={14} />
+                </Button>
+                <Button size="sm" variant="ghost" title="Copy Prompt" onClick={() => navigator.clipboard.writeText(prompt)}>
+                    <Copy size={14} />
+                </Button>
+                
+                <div className="flex-1" />
+                
+                {displayImage && (
+                    <>
+                        <Button size="sm" variant="ghost" title="Copy Image" onClick={handleCopyImage}>
+                            <Copy size={14} />
+                        </Button>
+                        <Button size="sm" variant="ghost" title="Open Folder" onClick={() => api.openPath(displayImage.file_path)}>
+                            <FolderOpen size={14} />
+                        </Button>
+                    </>
+                )}
+                <Button size="sm" variant="danger" title="Delete Row" onClick={handleDelete}>
+                    <Trash2 size={14} />
+                </Button>
+            </div>
+
+            {showSettings && (
+                <div className="mt-2 p-3 bg-black/20 rounded border border-white/5">
+                    <RowSettingsOverride row={row} />
+                </div>
+            )}
+        </div>
+
+        {/* 3. Image Preview */}
+        <div className="w-48 flex flex-col gap-2">
+            <div 
+                className="aspect-square bg-black/30 rounded-lg border border-white/5 flex items-center justify-center overflow-hidden relative cursor-pointer group/img"
+                onClick={() => { if(displayImage) setLightboxIndex(row.images.length - 1); }}
+            >
+                {displayImage ? (
+                    <>
+                        <img src={imageUrl(displayImage.file_path)} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity text-xs text-white">
+                            Click to Expand
+                        </div>
+                    </>
+                ) : (
+                    <div className="flex flex-col items-center text-text-muted/20">
+                        <ImageIcon size={32} />
+                        <span className="text-[10px] mt-2">No Image</span>
+                    </div>
+                )}
+            </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Lightbox Portal */}
+    {lightboxIndex !== null && (
+        <ImageLightbox 
+            images={row.images} 
+            initialIndex={lightboxIndex} 
+            onClose={() => setLightboxIndex(null)} 
+        />
+    )}
+    </>
+  );
+}
