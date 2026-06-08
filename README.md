@@ -77,6 +77,32 @@ cat01_prompt0001_q-medium_run01.png
 
 Each session writes `generation_log.jsonl` with prompt IDs, category IDs, full prompts sent to Azure, filenames, statuses, Azure request IDs, and errors. Export also includes `export_metadata.json`, `export_summary.json`, and the generation log when present.
 
+### Prepare Markdown Logo Prompts
+
+Use `scripts/prepare_logo_prompts.py` when logo prompts start as category-organized Markdown files and need to become import-ready ImageAI batches.
+
+```bash
+python scripts/prepare_logo_prompts.py --source /path/to/logo-markdown-folder
+```
+
+By default, outputs are written to `/path/to/logo-markdown-folder/logos_prepared`. Use `--output` to choose another destination:
+
+```bash
+python scripts/prepare_logo_prompts.py \
+  --source /path/to/logo-markdown-folder \
+  --output /path/to/prepared-output
+```
+
+The script extracts prompt headings such as `## N01 - Missing core`, `## C01 — Kernel in a vault`, `## 61. AI kernel inside a shell`, and `### 15.01 — Source ledger`. It writes:
+
+- `logos_prompts.csv`: structured CSV with `prompt_id`, `category_id`, and `prompt`.
+- `logos_prompts.json` and `logos_prompts.jsonl`: structured manifests.
+- `imageai_session.json`: an ImageAI session preserving prompt/category IDs and source metadata.
+- `per_category/*.csv`: one CSV per category.
+- `summary.json` and `preparation_report.md`: preparation counts and source summary.
+
+The generated session uses relative source paths in metadata so prepared files are publishable without exposing local machine paths.
+
 ## Run The PySide App
 
 ```bash
@@ -120,6 +146,7 @@ The frontend expects the Python backend at `http://127.0.0.1:8765`.
 app/                    Python backend, providers, queue, session, export, and PySide UI
 frontend/               Experimental React/Electron client
 macos-swiftui/          Experimental native macOS SwiftUI client
+scripts/                Utility scripts for preparing prompt batches
 tests/                  Python unit tests for parser, queue, session, exporter, and related logic
 main.py                 PySide desktop entrypoint
 requirements.txt        Python dependencies
