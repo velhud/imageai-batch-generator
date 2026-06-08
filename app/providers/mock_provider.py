@@ -9,7 +9,7 @@ from typing import List
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.models import GlobalSettings, ModelInfo, ProviderCapabilities
+from app.models import GeneratedImage, GenerationContext, GlobalSettings, ModelInfo, ProviderCapabilities
 from .base import BaseProvider
 
 
@@ -41,8 +41,9 @@ class MockProvider(BaseProvider):
         output_dir: Path,
         cancel_event: Event,
         attachments: List[object] = [],
-    ) -> List[Path]:
-        paths: List[Path] = []
+        context: GenerationContext | None = None,
+    ) -> List[GeneratedImage]:
+        paths: List[GeneratedImage] = []
         count = max(1, min(settings.num_images, 8))
         size = settings.custom_size or {"width": 1024, "height": 1024}
         font = _ensure_font()
@@ -62,7 +63,7 @@ class MockProvider(BaseProvider):
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / file_name
             img.save(path)
-            paths.append(path)
+            paths.append(GeneratedImage(file_path=path, metadata={"provider": self.id, "model": settings.model_id}))
             time.sleep(0.2)
         return paths
 

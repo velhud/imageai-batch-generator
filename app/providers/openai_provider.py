@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Event
 from typing import List
 
-from app.models import GlobalSettings, ModelInfo, ProviderCapabilities
+from app.models import GeneratedImage, GenerationContext, GlobalSettings, ModelInfo, ProviderCapabilities
 from .base import BaseProvider
 
 
@@ -38,7 +38,8 @@ class OpenAIProvider(BaseProvider):
         output_dir: Path,
         cancel_event: Event,
         attachments: List[object] = [],
-    ) -> List[Path]:
+        context: GenerationContext | None = None,
+    ) -> List[GeneratedImage]:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("Missing OPENAI_API_KEY for OpenAI provider.")
@@ -64,7 +65,7 @@ class OpenAIProvider(BaseProvider):
         )
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        paths: List[Path] = []
+        paths: List[GeneratedImage] = []
         for idx, img_data in enumerate(response.data):
             if cancel_event.is_set():
                 break
@@ -73,5 +74,17 @@ class OpenAIProvider(BaseProvider):
                 path = output_dir / f"openai_{idx}.png"
                 with open(path, "wb") as f:
                     f.write(raw)
-                paths.append(path)
+                paths.append(
+                    GeneratedImage(
+                        file_path=path,
+                        metadata={
+                            "provider": self.id,
+                            "model": settings.model_id or "dall-e-3",
+                            "size": size_string,
+                            "quality": "high" if settings.quality and settings.quality >= 7 else "standard",
+                            "n": count,
+                            "output_format": "png",
+                        },
+                    )
+                )
         return paths

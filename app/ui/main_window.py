@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from app.azure_logo_workflow import apply_azure_logo_preset
 from app.exporter import ImageExporter
+from app.generation_log import verify_rows
 from app.models import GlobalSettings, ImageResult, RowData, RowSettings, RowStatus, SessionData, PromptTemplate
 from app.providers.registry import ProviderRegistry
 from app.queue_manager import GenerationQueue
@@ -122,6 +124,10 @@ class MainWindow(QtWidgets.QMainWindow):
         batch_btn.clicked.connect(self._open_batch_dialog)
         layout.addWidget(batch_btn)
 
+        azure_preset_btn = QtWidgets.QPushButton("Azure Logo Preset")
+        azure_preset_btn.clicked.connect(self._apply_azure_logo_preset)
+        layout.addWidget(azure_preset_btn)
+
         tpl_btn = QtWidgets.QPushButton("Templates…")
         tpl_btn.clicked.connect(self._open_templates_dialog)
         layout.addWidget(tpl_btn)
@@ -174,6 +180,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.negative_edit.setFixedHeight(60)
         self.negative_edit.textChanged.connect(self._global_changed)
         form.addRow("Negative prompt", self.negative_edit)
+
+        self.prompt_wrapper_edit = QtWidgets.QTextEdit()
+        self.prompt_wrapper_edit.setFixedHeight(80)
+        self.prompt_wrapper_edit.textChanged.connect(self._global_changed)
+        form.addRow("Prompt wrapper", self.prompt_wrapper_edit)
 
         seed_layout = QtWidgets.QHBoxLayout()
         self.seed_spin = QtWidgets.QSpinBox()
@@ -248,9 +259,15 @@ class MainWindow(QtWidgets.QMainWindow):
         gen_sel_btn = QtWidgets.QPushButton("Generate Selected")
         gen_sel_btn.clicked.connect(self._generate_selected)
         layout.addWidget(gen_sel_btn)
+        gen_missing_btn = QtWidgets.QPushButton("Generate Missing")
+        gen_missing_btn.clicked.connect(self._generate_missing)
+        layout.addWidget(gen_missing_btn)
         gen_all_btn = QtWidgets.QPushButton("Generate All")
         gen_all_btn.clicked.connect(self._generate_all)
         layout.addWidget(gen_all_btn)
+        stop_after_current = QtWidgets.QPushButton("Stop After Current")
+        stop_after_current.clicked.connect(self.queue.stop_after_current)
+        layout.addWidget(stop_after_current)
         stop_all = QtWidgets.QPushButton("Stop All")
         stop_all.clicked.connect(self.queue.cancel_all)
         layout.addWidget(stop_all)
@@ -268,6 +285,9 @@ class MainWindow(QtWidgets.QMainWindow):
         export_all = QtWidgets.QPushButton("Export All")
         export_all.clicked.connect(self._export_all)
         layout.addWidget(export_all)
+        verify_btn = QtWidgets.QPushButton("Verify Batch")
+        verify_btn.clicked.connect(self._verify_batch)
+        layout.addWidget(verify_btn)
 
         self.status_bar_label = QtWidgets.QLabel("")
         layout.addWidget(self.status_bar_label)
@@ -283,6 +303,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.num_spin.setValue(gs.num_images)
         self.style_combo.setCurrentText(gs.style_preset)
         self.negative_edit.setPlainText(gs.negative_prompt)
+        self.prompt_wrapper_edit.setPlainText(gs.prompt_wrapper)
         self.random_seed_box.setChecked(gs.random_seed)
         self.seed_spin.setValue(gs.seed or 0)
         self.quality_slider.setValue(gs.quality)
@@ -318,6 +339,7 @@ class MainWindow(QtWidgets.QMainWindow):
         gs.num_images = self.num_spin.value()
         gs.style_preset = self.style_combo.currentText()
         gs.negative_prompt = self.negative_edit.toPlainText()
+        gs.prompt_wrapper = self.prompt_wrapper_edit.toPlainText()
         gs.random_seed = self.random_seed_box.isChecked()
         gs.seed = None if gs.random_seed else self.seed_spin.value()
         gs.quality = self.quality_slider.value()
@@ -415,7 +437,7 @@ class MainWindow(QtWidgets.QMainWindow):
         row.status = RowStatus.QUEUED
         widget = self.row_widgets[row.id]
         widget.update_status(RowStatus.QUEUED)
-        self.queue.enqueue(row, self.session.global_settings)
+        self.queue.enqueue(row, self.session.global_settings, row_index=self.session.rows.index(row) + 1)
         self._update_status_summary()
 
     def _regenerate_row(self, row_id: str) -> None:
@@ -434,8 +456,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _generate_selected(self) -> None:
         for row in self.session.rows:
-            if row.selected and row.status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.CANCELLED, RowStatus.COMPLETED}:
+            if row.selected and row.status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.FILTERED, RowStatus.CANCELLED, RowStatus.COMPLETED}:
                 self._generate_row(row.id)
+
+    def _generate_missing(self) -> None:
+        for row in self.session.rows:
+            if not row.images and row.status not in {RowStatus.QUEUED, RowStatus.GENERATING}:
+                row.status = RowStatus.QUEUED
+                widget = self.row_widgets.get(row.id)
+                if widget:
+                    widget.update_status(RowStatus.QUEUED)
+                self.queue.enqueue(row, self.session.global_settings, row_index=self.session.rows.index(row) + 1, missing_only=True)
+        self._update_status_summary()
 
     def _generate_all(self) -> None:
         threshold = self.session.global_settings.confirm_generate_threshold or 300
@@ -446,7 +478,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if confirm != QtWidgets.QMessageBox.Yes:
                 return
         for row in self.session.rows:
-            if row.status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.CANCELLED, RowStatus.COMPLETED}:
+            if row.status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.FILTERED, RowStatus.CANCELLED, RowStatus.COMPLETED}:
                 self._generate_row(row.id)
 
     def _delete_row(self, row_id: str) -> None:
@@ -472,6 +504,9 @@ class MainWindow(QtWidgets.QMainWindow):
         clone = RowData(
             id=str(uuid.uuid4()),
             prompt=row.prompt,
+            prompt_id=row.prompt_id,
+            category_id=row.category_id,
+            source_metadata=dict(row.source_metadata),
             status=RowStatus.IDLE,
             settings=RowSettings(**row.settings.to_dict()),
         )
@@ -541,13 +576,25 @@ class MainWindow(QtWidgets.QMainWindow):
             row.status = RowStatus.COMPLETED
             row.error_message = ""
             paths = payload.get("paths", [])
+            images = payload.get("images", [])
             duration = payload.get("duration")
             keep_existing = payload.get("keep_existing", True)
             if not keep_existing:
                 row.images = []
             row.last_duration = duration
-            for p in paths:
-                row.images.append(ImageResult(id=str(uuid.uuid4()), row_id=row.id, file_path=p))
+            if images:
+                for img in images:
+                    row.images.append(
+                        ImageResult(
+                            id=str(uuid.uuid4()),
+                            row_id=row.id,
+                            file_path=img.get("path", ""),
+                            metadata=img.get("metadata", {}),
+                        )
+                    )
+            else:
+                for p in paths:
+                    row.images.append(ImageResult(id=str(uuid.uuid4()), row_id=row.id, file_path=p))
             if widget:
                 widget.update_status(RowStatus.COMPLETED, f"Completed: {len(row.images)} images")
                 widget.refresh(self.session.global_settings, int(widget.index_label.text()))
@@ -561,10 +608,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.rate_limit_hits >= 3:
                     self.banner.setText("Multiple rate limit errors detected. Try lowering concurrency or RPM in settings.")
                     self.banner.setVisible(True)
+        elif event == "filtered":
+            row.status = RowStatus.FILTERED
+            row.error_message = payload.get("message", "")
+            if widget:
+                widget.update_status(RowStatus.FILTERED, row.error_message)
         elif event == "cancelled":
             row.status = RowStatus.CANCELLED
             if widget:
                 widget.update_status(RowStatus.CANCELLED, "Cancelled")
+        elif event == "skipped":
+            row.error_message = payload.get("message", "")
+            if any(Path(img.file_path).exists() for img in row.images):
+                row.status = RowStatus.COMPLETED
+            if widget:
+                widget.update_status(row.status, row.error_message)
         self.session_manager.autosave()
         self._update_status_summary()
 
@@ -707,6 +765,27 @@ class MainWindow(QtWidgets.QMainWindow):
         count, _ = exporter.export_rows(rows, folder, export_metadata=True)
         QtWidgets.QMessageBox.information(self, "Export", f"Exported {count} image(s) to {folder}")
 
+    def _verify_batch(self) -> None:
+        result = verify_rows(self.session.rows)
+        message = (
+            f"Prompts: {result['total_prompts']}\n"
+            f"Successful images: {result['successful_images']}\n"
+            f"Filtered: {result['filtered_count']}\n"
+            f"Failed: {result['failed_count']}\n"
+            f"Missing: {result['missing_count']}\n"
+            f"Matches prompt count: {result['matches_prompt_count']}"
+        )
+        QtWidgets.QMessageBox.information(self, "Batch verification", message)
+
+    def _apply_azure_logo_preset(self) -> None:
+        self._push_undo()
+        apply_azure_logo_preset(self.session.global_settings)
+        self._reset_queue()
+        self.apply_global_settings_to_ui()
+        self._refresh_all_rows()
+        self.session_manager.autosave()
+        QtWidgets.QMessageBox.information(self, "Azure Logo Preset", "Azure GPT-Image-2 logo batch defaults applied.")
+
     def _ask_export_folder(self) -> Optional[Path]:
         default = self.session.global_settings.export_folder or str(Path.home() / "Pictures")
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose export folder", default)
@@ -725,7 +804,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
         )
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            concurrency, export_folder, theme, api_key, gemini_key, rpm, threshold = dlg.get_values()
+            (
+                concurrency,
+                export_folder,
+                theme,
+                api_key,
+                gemini_key,
+                rpm,
+                threshold,
+                azure_endpoint,
+                azure_deployment,
+                azure_api_key,
+            ) = dlg.get_values()
             self.session.global_settings.concurrency_limit = concurrency
             if concurrency != self.queue.concurrency:
                 self.queue.concurrency = concurrency
@@ -740,6 +830,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 os.environ["OPENAI_API_KEY"] = api_key
             if gemini_key:
                 os.environ["GEMINI_API_KEY"] = gemini_key
+            if azure_endpoint:
+                os.environ["AZURE_OPENAI_ENDPOINT"] = azure_endpoint
+            if azure_deployment:
+                os.environ["AZURE_GPT_IMAGE_2_DEPLOYMENT"] = azure_deployment
+            if azure_api_key:
+                os.environ["AZURE_OPENAI_API_KEY"] = azure_api_key
             QtWidgets.QMessageBox.information(self, "Settings", "Settings saved.")
 
     def _start_autosave(self) -> None:

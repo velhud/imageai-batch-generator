@@ -1,4 +1,4 @@
-export type RowStatus = "Idle" | "Queued" | "Generating" | "Completed" | "Error" | "Cancelled";
+export type RowStatus = "Idle" | "Queued" | "Generating" | "Completed" | "Error" | "Filtered" | "Cancelled";
 
 export interface ProviderInfo {
   id: string;
@@ -11,6 +11,17 @@ export interface ModelInfo {
   id: string;
   name: string;
   provider_id: string;
+  capabilities?: ProviderCapabilitiesDTO;
+}
+
+export interface ProviderCapabilitiesDTO {
+  max_images: number;
+  supports_style: boolean;
+  supports_negative_prompt: boolean;
+  supports_seed: boolean;
+  supports_quality: boolean;
+  supports_safety: boolean;
+  size_presets: Record<string, SizePresetDTO>;
 }
 
 export interface SizePresetDTO {
@@ -47,12 +58,14 @@ export interface GlobalSettingsDTO {
   rate_limit_rpm: number;
   thinking_budget: number;
   thinking_level: string;
+  prompt_wrapper: string;
 }
 
 export interface ImageResultDTO {
   id: string;
   row_id: string;
   file_path: string;
+  metadata?: Record<string, any>;
 }
 
 export interface RowSettingsDTO {
@@ -77,6 +90,9 @@ export interface RowSettingsDTO {
 export interface RowDTO {
   id: string;
   prompt: string;
+  prompt_id: string;
+  category_id: string;
+  source_metadata: Record<string, any>;
   status: RowStatus;
   error_message: string;
   selected: boolean;
@@ -111,6 +127,45 @@ export interface BackendState {
   session: SessionDTO;
   providers: ProviderInfo[];
   stats: StatsDTO;
+}
+
+export interface ParsedBatchRowDTO {
+  prompt: string;
+  prompt_id: string;
+  category_id: string;
+  source_metadata: Record<string, string>;
+}
+
+export interface BatchParseResponseDTO {
+  prompts: string[];
+  rows: ParsedBatchRowDTO[];
+  errors: string[];
+}
+
+export interface ProviderStatusDTO {
+  azure_openai: {
+    configured: boolean;
+    missing: string[];
+    endpoint: string;
+    deployment: string;
+    api_version: string;
+  };
+  azure_logo_wrapper: string;
+}
+
+export interface BatchVerificationDTO {
+  total_prompts: number;
+  successful_images: number;
+  filtered_count: number;
+  failed_count: number;
+  missing_count: number;
+  skipped_count: number;
+  matches_prompt_count: boolean;
+  successful_prompt_ids: string[];
+  filtered_prompt_ids: string[];
+  failed_prompt_ids: string[];
+  missing_prompt_ids: string[];
+  skipped_prompt_ids: string[];
 }
 
 // RPC Response Wrappers

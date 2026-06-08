@@ -101,6 +101,9 @@ class RowWidget(QtWidgets.QWidget):
         self.status_label = QtWidgets.QLabel("Idle")
         mid.addWidget(self.status_label)
 
+        self.batch_meta_label = QtWidgets.QLabel("")
+        mid.addWidget(self.batch_meta_label)
+
         self.tags_edit = QtWidgets.QLineEdit()
         self.tags_edit.setPlaceholderText("Tags (comma separated)")
         self.tags_edit.editingFinished.connect(self._on_tags_changed)
@@ -327,6 +330,14 @@ class RowWidget(QtWidgets.QWidget):
         self.generate_behavior.setCurrentText("Keep images" if keep else "Replace images")
         self.regen_same_seed.setChecked(self.row.settings.regen_use_same_seed if self.row.settings.regen_use_same_seed is not None else eff.regen_use_same_seed)
         self.update_status(self.row.status, self.row.error_message)
+        meta_parts = []
+        if self.row.category_id:
+            meta_parts.append(f"Category: {self.row.category_id}")
+        if self.row.prompt_id:
+            meta_parts.append(f"Prompt ID: {self.row.prompt_id}")
+        if self.row.images:
+            meta_parts.append(f"File: {Path(self.row.images[-1].file_path).name}")
+        self.batch_meta_label.setText(" • ".join(meta_parts))
         self._update_preview()
         if self.global_settings.prompt_highlighting:
             PromptHighlighter(self.prompt_edit.document())
@@ -348,7 +359,7 @@ class RowWidget(QtWidgets.QWidget):
         self.regen_btn.setVisible(bool(self.row.images))
         self.export_btn.setEnabled(bool(self.row.images))
         self.stop_btn.setVisible(status == RowStatus.GENERATING)
-        self.generate_btn.setEnabled(status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.CANCELLED, RowStatus.COMPLETED})
+        self.generate_btn.setEnabled(status in {RowStatus.IDLE, RowStatus.ERROR, RowStatus.FILTERED, RowStatus.CANCELLED, RowStatus.COMPLETED})
 
     def _update_preview(self) -> None:
         if self.row.images:

@@ -16,6 +16,7 @@ const badgeVariants = cva(
         Generating: "bg-amber-400/10 text-amber-400 ring-amber-400/20 animate-pulse",
         Completed: "bg-emerald-400/10 text-emerald-400 ring-emerald-400/20",
         Error: "bg-red-400/10 text-red-400 ring-red-400/20",
+        Filtered: "bg-fuchsia-400/10 text-fuchsia-300 ring-fuchsia-400/20",
         Cancelled: "bg-gray-400/10 text-gray-400 ring-gray-400/20",
       },
     },
@@ -25,7 +26,7 @@ const badgeVariants = cva(
   }
 );
 
-const allowedStatuses: RowStatus[] = ["Idle", "Queued", "Generating", "Completed", "Error", "Cancelled"];
+const allowedStatuses: RowStatus[] = ["Idle", "Queued", "Generating", "Completed", "Error", "Filtered", "Cancelled"];
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   status: RowStatus;

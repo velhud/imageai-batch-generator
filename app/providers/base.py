@@ -3,9 +3,32 @@ from __future__ import annotations
 import abc
 from pathlib import Path
 from threading import Event
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
-from app.models import GlobalSettings, ModelInfo
+from app.models import GeneratedImage, GenerationContext, GlobalSettings, ModelInfo
+
+
+class ProviderGenerationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: str = "failed",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.metadata = metadata or {}
+
+
+class ProviderFilteredError(ProviderGenerationError):
+    def __init__(self, message: str, *, metadata: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message, status="filtered", metadata=metadata)
+
+
+class ProviderRetryExhaustedError(ProviderGenerationError):
+    def __init__(self, message: str, *, metadata: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message, status="retry_exhausted", metadata=metadata)
 
 
 class BaseProvider(abc.ABC):
@@ -24,8 +47,12 @@ class BaseProvider(abc.ABC):
         output_dir: Path,
         cancel_event: Event,
         attachments: List[object] = [],
-    ) -> List[Path]:
+        context: GenerationContext | None = None,
+    ) -> List[GeneratedImage]:
         """Generate images for a prompt. Should respect cancel_event when possible."""
+
+    def quota_cost(self, settings: GlobalSettings) -> int:
+        return 1
 
     def setup(self) -> None:
         """Optional heavy initialization."""

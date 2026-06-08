@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Dict, List, Tuple
 
-from app.models import DEFAULT_SIZE_PRESETS, GlobalSettings, ModelInfo, ProviderCapabilities
+from app.models import DEFAULT_SIZE_PRESETS, GeneratedImage, GenerationContext, GlobalSettings, ModelInfo, ProviderCapabilities
 from .base import BaseProvider
 
 NANO_MODEL_ID = "gemini-2.5-flash-image"
@@ -53,7 +53,8 @@ class GoogleGeminiProvider(BaseProvider):
         output_dir: Path,
         cancel_event: Event,
         attachments: List[Any] = [],
-    ) -> List[Path]:
+        context: GenerationContext | None = None,
+    ) -> List[GeneratedImage]:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("Missing GEMINI_API_KEY. Add it to the project .env.")
@@ -70,7 +71,7 @@ class GoogleGeminiProvider(BaseProvider):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         count = max(1, min(settings.num_images or 1, 4))
-        paths: List[Path] = []
+        paths: List[GeneratedImage] = []
         for idx in range(count):
             if cancel_event.is_set():
                 break
@@ -105,7 +106,17 @@ class GoogleGeminiProvider(BaseProvider):
                 path = output_dir / file_name
                 with open(path, "wb") as f:
                     f.write(raw)
-                paths.append(path)
+                paths.append(
+                    GeneratedImage(
+                        file_path=path,
+                        metadata={
+                            "provider": self.id,
+                            "model": model_id,
+                            "mime_type": mime_type,
+                            "output_format": ext,
+                        },
+                    )
+                )
 
         if cancel_event.is_set() and not paths:
             raise RuntimeError("Cancelled")

@@ -31,3 +31,24 @@ def test_generation_queue_creates_images(tmp_path: Path):
     queue.shutdown()
     assert any(tmp_path.rglob("*.png"))
     assert events.get("queued")
+
+
+def test_generation_queue_skips_existing_for_missing_only(tmp_path: Path):
+    registry = ProviderRegistry()
+    queue = GenerationQueue(registry, output_root=tmp_path, concurrency=1)
+    existing = tmp_path / "existing.png"
+    existing.write_bytes(b"png")
+    from app.models import ImageResult
+
+    row = RowData(id="row1", prompt="test prompt", images=[ImageResult(id="img1", row_id="row1", file_path=str(existing))])
+    events = {}
+
+    def listener(event: str, row_id: str, payload: dict) -> None:
+        events[event] = payload
+
+    queue.register_listener(listener)
+    queue.enqueue(row, GlobalSettings(), missing_only=True)
+    queue.shutdown()
+
+    assert "skipped" in events
+    assert not list((tmp_path / "row1").glob("*.png"))

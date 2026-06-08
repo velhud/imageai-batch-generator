@@ -9,7 +9,7 @@ from app.models import RowData, RowStatus, StatsSnapshot
 def compute_stats(rows: List[RowData]) -> StatsSnapshot:
     total = len(rows)
     completed = len([r for r in rows if r.status == RowStatus.COMPLETED])
-    errors = len([r for r in rows if r.status == RowStatus.ERROR])
+    errors = len([r for r in rows if r.status in {RowStatus.ERROR, RowStatus.FILTERED}])
     durations = [r.last_duration for r in rows if r.last_duration]
     avg_duration = sum(durations) / len(durations) if durations else 0.0
     per_provider = Counter(

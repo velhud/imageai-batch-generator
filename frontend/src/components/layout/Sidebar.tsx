@@ -6,6 +6,7 @@ import {
   PlusSquare, ChevronLeft, ChevronRight, Zap, Sliders, FileText
 } from 'lucide-react';
 import { GenerationSettingsPanel } from '@/components/settings/GenerationSettingsPanel';
+import { AzureLogoBatchPanel } from '@/components/settings/AzureLogoBatchPanel';
 import { TemplatesDialog } from '@/components/dialogs/TemplatesDialog';
 
 export function Sidebar({ state }: { state: BackendState }) {
@@ -65,6 +66,8 @@ export function Sidebar({ state }: { state: BackendState }) {
                     <Sliders size={12} />
                     Global Defaults
                 </div>
+                <AzureLogoBatchPanel state={state} />
+                <div className="my-5 h-px bg-white/5" />
                 <GenerationSettingsPanel state={state} />
             </div>
         ) : (

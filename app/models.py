@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 import mimetypes
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class RowStatus(str, Enum):
@@ -17,6 +17,7 @@ class RowStatus(str, Enum):
     GENERATING = "Generating"
     COMPLETED = "Completed"
     ERROR = "Error"
+    FILTERED = "Filtered"
     CANCELLED = "Cancelled"
 
 
@@ -184,6 +185,7 @@ class GlobalSettings:
     rate_limit_rpm: int = 60
     thinking_budget: int = 0  # For Nano Banana (2.5), 0=off, -1=dynamic
     thinking_level: str = "high"  # For Nano Banana Pro (3.0), "low" or "high"
+    prompt_wrapper: str = ""
 
     def to_dict(self) -> Dict:
         return dataclasses.asdict(self)
@@ -249,9 +251,41 @@ class ImageResult:
 
 
 @dataclass
+class GeneratedImage:
+    file_path: Path
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GenerationContext:
+    row_id: str
+    row_index: int
+    prompt_id: str
+    category_id: str
+    original_prompt: str
+    full_prompt: str
+    run_index: int = 1
+    log_path: Optional[str] = None
+
+    def to_metadata(self) -> Dict[str, Any]:
+        return {
+            "row_id": self.row_id,
+            "row_index": self.row_index,
+            "prompt_id": self.prompt_id,
+            "category_id": self.category_id,
+            "original_prompt": self.original_prompt,
+            "full_prompt": self.full_prompt,
+            "run_index": self.run_index,
+        }
+
+
+@dataclass
 class RowData:
     id: str
     prompt: str = ""
+    prompt_id: str = ""
+    category_id: str = ""
+    source_metadata: Dict[str, Any] = field(default_factory=dict)
     status: RowStatus = RowStatus.IDLE
     error_message: str = ""
     selected: bool = False
@@ -267,6 +301,9 @@ class RowData:
         return {
             "id": self.id,
             "prompt": self.prompt,
+            "prompt_id": self.prompt_id,
+            "category_id": self.category_id,
+            "source_metadata": self.source_metadata,
             "status": self.status.value,
             "error_message": self.error_message,
             "selected": self.selected,
@@ -284,6 +321,9 @@ class RowData:
         return RowData(
             id=data["id"],
             prompt=data.get("prompt", ""),
+            prompt_id=data.get("prompt_id", ""),
+            category_id=data.get("category_id", ""),
+            source_metadata=data.get("source_metadata", {}),
             status=RowStatus(data.get("status", RowStatus.IDLE.value)),
             error_message=data.get("error_message", ""),
             selected=data.get("selected", False),

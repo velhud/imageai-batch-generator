@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { RowDTO } from '@/api/types';
+import { GlobalSettingsDTO, RowDTO } from '@/api/types';
 import { api, imageUrl } from '@/api/client';
 import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
@@ -18,9 +18,10 @@ const generateId = () => {
 interface RowCardProps {
   row: RowDTO;
   index: number;
+  globalSettings: GlobalSettingsDTO;
 }
 
-export function RowCard({ row, index }: RowCardProps) {
+export function RowCard({ row, index, globalSettings }: RowCardProps) {
   const [prompt, setPrompt] = useState(row.prompt || "");
   const [tags, setTags] = useState((row.tags || []).join(", "));
   const [showSettings, setShowSettings] = useState(false);
@@ -77,6 +78,10 @@ export function RowCard({ row, index }: RowCardProps) {
   };
 
   const displayImage = row.images.length > 0 ? row.images[row.images.length - 1] : null;
+  const outputName = displayImage?.file_path.split(/[/\\]/).pop();
+  const fullPromptPreview = globalSettings.prompt_wrapper?.trim()
+    ? `${prompt.trim()}\n\n${globalSettings.prompt_wrapper.trim()}`
+    : prompt;
 
   return (
     <>
@@ -99,6 +104,11 @@ export function RowCard({ row, index }: RowCardProps) {
                 <div className="flex gap-2 items-center">
                     <Badge status={row.status} />
                     {row.images.length > 0 && <span className="text-xs bg-white/10 px-1.5 py-0.5 rounded text-text-muted">{row.images.length} images</span>}
+                    {(row.category_id || row.prompt_id) && (
+                      <span className="text-xs bg-cyan-400/10 text-cyan-200 border border-cyan-400/20 px-1.5 py-0.5 rounded">
+                        {[row.category_id, row.prompt_id].filter(Boolean).join(" / ")}
+                      </span>
+                    )}
                 </div>
                 {row.error_message && <span className="text-xs text-red-400 truncate max-w-xs">{row.error_message}</span>}
             </div>
@@ -125,6 +135,13 @@ export function RowCard({ row, index }: RowCardProps) {
                     placeholder="Tags (comma separated)..."
                     className="flex-1 bg-transparent border-b border-white/5 focus:border-white/20 text-xs py-1 px-1 outline-none text-text-muted focus:text-text-main transition-colors"
                 />
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-[10px] text-text-muted">
+                <span>Provider: {row.settings.provider_id || globalSettings.provider_id}</span>
+                <span>Quality: {row.settings.quality ?? globalSettings.quality}</span>
+                <span>Size: {row.settings.size_preset || globalSettings.size_preset}</span>
+                {outputName && <span className="text-cyan-200">Output: {outputName}</span>}
             </div>
 
             <div className="flex flex-wrap gap-2 mb-1">
@@ -194,6 +211,12 @@ export function RowCard({ row, index }: RowCardProps) {
             {showSettings && (
                 <div className="mt-2 p-3 bg-black/20 rounded border border-white/5">
                     <RowSettingsOverride row={row} />
+                    <div className="mt-3 border-t border-white/5 pt-3 text-xs">
+                      <div className="mb-1 text-text-muted">Full Prompt Preview</div>
+                      <div className="max-h-28 overflow-y-auto rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed text-text-main">
+                        {fullPromptPreview}
+                      </div>
+                    </div>
                 </div>
             )}
         </div>

@@ -3,6 +3,7 @@ import { api } from '@/api/client';
 import { Button } from '@/components/common/Button';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, FileSpreadsheet, List as ListIcon, FileJson, Hash } from 'lucide-react';
+import { ParsedBatchRowDTO } from '@/api/types';
 
 interface BatchDialogProps {
   isOpen: boolean;
@@ -16,43 +17,20 @@ export function BatchDialog({ isOpen, onClose }: BatchDialogProps) {
   const [mode, setMode] = useState<BatchMode>('lines');
   const [promptField, setPromptField] = useState("prompt");
   const [csvColumn, setCsvColumn] = useState("prompt");
-  const [preview, setPreview] = useState<string[]>([]);
+  const [preview, setPreview] = useState<ParsedBatchRowDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [applyMode, setApplyMode] = useState<'append' | 'replace' | 'fill'>('append');
   
   const queryClient = useQueryClient();
 
   if (!isOpen) return null;
 
-  const parse = () => {
+  const parse = async () => {
     setError(null);
-    const lines = text.split('\n').filter(l => l.trim());
-    let prompts: string[] = [];
-
     try {
-      if (mode === 'lines') {
-        prompts = lines;
-      } else if (mode === 'numbered') {
-        prompts = lines.map(l => l.replace(/^\s*\d+\s*[\.\)\-]\s*/, '')).filter(Boolean);
-      } else if (mode === 'json_array') {
-        const data = JSON.parse(text);
-        if (Array.isArray(data)) {
-          prompts = data.map((item: any) => typeof item === 'string' ? item : item[promptField]);
-        } else {
-          throw new Error("Not a JSON array");
-        }
-      } else if (mode === 'json_lines') {
-        prompts = lines.map(l => JSON.parse(l)[promptField]);
-      } else if (mode === 'csv') {
-        const colIndex = parseInt(csvColumn, 10);
-        const useIndex = !isNaN(colIndex);
-        
-        prompts = lines.map((l) => {
-            const cols = l.split(',');
-            if (useIndex) return cols[colIndex];
-            return cols[0];
-        });
-      }
-      setPreview(prompts.filter(Boolean));
+      const result = await api.parseBatch(text, mode, promptField, csvColumn);
+      setPreview(result.rows);
+      setError(result.errors.length ? result.errors.slice(0, 3).join("; ") : null);
     } catch (e: any) {
       setError(e.message || "Parse error");
       setPreview([]);
@@ -60,10 +38,17 @@ export function BatchDialog({ isOpen, onClose }: BatchDialogProps) {
   };
 
   const handleImport = async () => {
-    if (preview.length === 0) parse();
-    const finalPrompts = preview.length > 0 ? preview : text.split('\n'); 
-    
-    await api.addRows(finalPrompts);
+    let finalPreview = preview;
+    if (finalPreview.length === 0) {
+      const result = await api.parseBatch(text, mode, promptField, csvColumn);
+      finalPreview = result.rows;
+      setPreview(result.rows);
+      if (!result.rows.length) {
+        setError(result.errors.join("; ") || "No prompts parsed");
+        return;
+      }
+    }
+    await api.importBatch(text, mode, promptField, csvColumn, applyMode);
     queryClient.invalidateQueries({ queryKey: ['state'] });
     setText("");
     setPreview([]);
@@ -118,7 +103,20 @@ export function BatchDialog({ isOpen, onClose }: BatchDialogProps) {
                     </div>
                 )}
 
-                <Button variant="secondary" onClick={parse} className="w-full">Update Preview</Button>
+                <div className="space-y-1">
+                    <label className="text-xs text-text-muted">Import Mode</label>
+                    <select
+                        className="w-full bg-surface border border-white/10 rounded p-2 text-sm"
+                        value={applyMode}
+                        onChange={e => setApplyMode(e.target.value as 'append' | 'replace' | 'fill')}
+                    >
+                        <option value="append">Append rows</option>
+                        <option value="replace">Replace all rows</option>
+                        <option value="fill">Fill empty rows, then append</option>
+                    </select>
+                </div>
+
+                <Button variant="secondary" onClick={() => parse()} className="w-full">Update Preview</Button>
             </div>
 
             <div className="flex-1 flex flex-col min-w-0">
@@ -146,7 +144,14 @@ export function BatchDialog({ isOpen, onClose }: BatchDialogProps) {
                                     {preview.map((p, i) => (
                                         <li key={i} className="flex gap-2">
                                             <span className="opacity-30 w-6 text-right">{i+1}.</span>
-                                            <span className="text-text-main">{p}</span>
+                                            <span className="text-text-main">
+                                                {(p.category_id || p.prompt_id) && (
+                                                    <span className="text-primary/80 mr-2">
+                                                        {[p.category_id, p.prompt_id].filter(Boolean).join(" /")}
+                                                    </span>
+                                                )}
+                                                {p.prompt}
+                                            </span>
                                         </li>
                                     ))}
                                 </ul>

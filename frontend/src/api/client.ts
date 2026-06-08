@@ -1,4 +1,15 @@
-import { BackendState, GlobalSettingsDTO, InputAttachmentDTO, RowDTO, RowSettingsDTO, RPCResponse, PromptTemplateDTO } from './types';
+import {
+  BackendState,
+  BatchParseResponseDTO,
+  BatchVerificationDTO,
+  GlobalSettingsDTO,
+  InputAttachmentDTO,
+  ProviderStatusDTO,
+  RowDTO,
+  RowSettingsDTO,
+  RPCResponse,
+  PromptTemplateDTO
+} from './types';
 
 export const RPC_BASE_URL = 'http://127.0.0.1:8765';
 const RPC_ENDPOINT = `${RPC_BASE_URL}/rpc`;
@@ -38,9 +49,16 @@ export const api = {
   redo: () => rpcCall<BackendState>('redo'),
   
   addRows: (prompts: string[]) => rpcCall<{ rows: RowDTO[] }>('add_rows', { prompts }),
+  parseBatch: (raw: string, mode: string, prompt_field = 'prompt', csv_column = 'prompt') =>
+    rpcCall<BatchParseResponseDTO>('parse_batch', { raw, mode, prompt_field, csv_column }),
+  importBatch: (raw: string, mode: string, prompt_field = 'prompt', csv_column = 'prompt', apply_mode = 'append') =>
+    rpcCall<{ rows: RowDTO[]; errors: string[] }>('import_batch', { raw, mode, prompt_field, csv_column, apply_mode }),
   
   updateRow: (row_id: string, updates: { 
     prompt?: string; 
+    prompt_id?: string;
+    category_id?: string;
+    source_metadata?: Record<string, any>;
     selected?: boolean;
     tags?: string[];
     settings?: Partial<RowSettingsDTO>;
@@ -51,11 +69,18 @@ export const api = {
   duplicateRow: (row_id: string) => rpcCall<BackendState>('duplicate_row', { row_id }),
   
   generateRows: (row_ids: string[]) => rpcCall<{ queued: string[] }>('generate_rows', { row_ids }),
+  generateMissing: (row_ids?: string[]) => rpcCall<{ queued: string[] }>('generate_missing', { row_ids }),
+  retryFailed: (row_ids?: string[]) => rpcCall<{ queued: string[] }>('retry_failed', { row_ids }),
   
   stopAll: () => rpcCall<{ stopped: boolean }>('stop_all'),
+  stopAfterCurrent: () => rpcCall<{ stopped_after_current: boolean }>('stop_after_current'),
   
   updateGlobalSettings: (settings: Partial<GlobalSettingsDTO>) => 
     rpcCall<GlobalSettingsDTO>('global_settings', settings),
+  applyAzureLogoPreset: () => rpcCall<GlobalSettingsDTO>('apply_azure_logo_preset'),
+  providerStatus: () => rpcCall<ProviderStatusDTO>('provider_status'),
+  verifyBatch: () => rpcCall<BatchVerificationDTO>('verify_batch'),
+  generationLog: () => rpcCall<{ rows: Record<string, any>[]; path: string }>('generation_log'),
 
   selectFolder: () => rpcCall<{ path: string }>('select_folder'),
   selectImageFile: () => rpcCall<{ path: string; mime: string } | null>('select_image_file'),

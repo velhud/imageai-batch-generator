@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from app.models import ModelInfo, ProviderInfo
+from .azure_provider import AzureOpenAIImageProvider
 from .base import BaseProvider
 from .google_provider import GoogleGeminiProvider
 from .mock_provider import MockProvider
@@ -15,6 +16,7 @@ class ProviderRegistry:
         self.register(MockProvider())
         self.register(GoogleGeminiProvider())
         self.register(OpenAIProvider())
+        self.register(AzureOpenAIImageProvider())
 
     def register(self, provider: BaseProvider) -> None:
         self.providers[provider.id] = provider

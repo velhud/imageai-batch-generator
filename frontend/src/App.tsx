@@ -142,7 +142,7 @@ function App() {
         {/* Workspace */}
         <div className="flex-1 p-8 overflow-y-auto scroll-smooth">
            {activeView === 'list' ? (
-             <ListView rows={filteredRows} />
+             <ListView rows={filteredRows} globalSettings={state.session.global_settings} />
            ) : (
              <MasonryGrid session={filteredSession} />
            )}

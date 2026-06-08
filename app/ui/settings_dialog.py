@@ -64,6 +64,16 @@ class AppSettingsDialog(QtWidgets.QDialog):
         self.gemini_api_key_edit.setEchoMode(QtWidgets.QLineEdit.Password)
         layout.addRow("Gemini API key (env)", self.gemini_api_key_edit)
 
+        self.azure_endpoint_edit = QtWidgets.QLineEdit(os.environ.get("AZURE_OPENAI_ENDPOINT", ""))
+        layout.addRow("Azure endpoint (env)", self.azure_endpoint_edit)
+
+        self.azure_deployment_edit = QtWidgets.QLineEdit(os.environ.get("AZURE_GPT_IMAGE_2_DEPLOYMENT", ""))
+        layout.addRow("Azure GPT-Image-2 deployment (env)", self.azure_deployment_edit)
+
+        self.azure_api_key_edit = QtWidgets.QLineEdit(os.environ.get("AZURE_OPENAI_API_KEY", ""))
+        self.azure_api_key_edit.setEchoMode(QtWidgets.QLineEdit.Password)
+        layout.addRow("Azure API key (env)", self.azure_api_key_edit)
+
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -74,7 +84,7 @@ class AppSettingsDialog(QtWidgets.QDialog):
         if folder:
             self.export_folder_edit.setText(folder)
 
-    def get_values(self) -> Tuple[int, str, str, str, str, int, int]:
+    def get_values(self) -> Tuple[int, str, str, str, str, int, int, str, str, str]:
         return (
             self.concurrency_spin.value(),
             self.export_folder_edit.text().strip(),
@@ -83,4 +93,7 @@ class AppSettingsDialog(QtWidgets.QDialog):
             self.gemini_api_key_edit.text().strip(),
             self.rpm_spin.value(),
             self.confirm_spin.value(),
+            self.azure_endpoint_edit.text().strip(),
+            self.azure_deployment_edit.text().strip(),
+            self.azure_api_key_edit.text().strip(),
         )

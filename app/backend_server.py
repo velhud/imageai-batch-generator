@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Dict, Any, List
 from urllib.parse import parse_qs, urlparse, unquote
 
+from app.azure_logo_workflow import AZURE_LOGO_PROMPT_WRAPPER, apply_azure_logo_preset
+from app.batch_parser import parse_batch_input
+from app.generation_log import read_generation_log, verify_rows
 from app.models import InputAttachment, RowData, RowStatus, SessionData, ImageResult, RowSettings, session_storage_dir
 from app.env import load_dotenv_if_available
 from app.providers.registry import ProviderRegistry
@@ -49,17 +53,37 @@ class BackendState:
                 row.status = RowStatus.COMPLETED
                 row.error_message = ""
                 # Handle images
+                images = payload.get("images", [])
                 paths = payload.get("paths", [])
                 keep = payload.get("keep_existing", True)
                 if not keep:
                     row.images = []
-                for p in paths:
-                    row.images.append(ImageResult(id=f"img-{len(row.images)+1}", row_id=row.id, file_path=p))
+                if images:
+                    for img in images:
+                        row.images.append(
+                            ImageResult(
+                                id=f"img-{len(row.images)+1}",
+                                row_id=row.id,
+                                file_path=img.get("path", ""),
+                                metadata=img.get("metadata", {}),
+                            )
+                        )
+                else:
+                    for p in paths:
+                        row.images.append(ImageResult(id=f"img-{len(row.images)+1}", row_id=row.id, file_path=p))
             elif event == "error":
                 row.status = RowStatus.ERROR
                 row.error_message = payload.get("message", "")
+            elif event == "filtered":
+                row.status = RowStatus.FILTERED
+                row.error_message = payload.get("message", "")
             elif event == "cancelled":
                 row.status = RowStatus.CANCELLED
+                row.error_message = payload.get("message", "")
+            elif event == "skipped":
+                row.error_message = payload.get("message", "")
+                if any(Path(img.file_path).exists() for img in row.images):
+                    row.status = RowStatus.COMPLETED
             self.session_manager.autosave()
 
     def _row_by_id(self, row_id: str) -> RowData | None:
@@ -178,6 +202,14 @@ class Handler(BaseHTTPRequestHandler):
         if action == "new_session":
             STATE.push_state()
             STATE.session = STATE.session_manager.new_session()
+            STATE.queue.shutdown()
+            STATE.queue = GenerationQueue(
+                STATE.registry,
+                output_root=STATE.session_manager.session_output_dir(),
+                concurrency=STATE.session.global_settings.concurrency_limit,
+                rpm=STATE.session.global_settings.rate_limit_rpm,
+            )
+            STATE.queue.register_listener(STATE._handle_event)
             STATE.push_state()
             return STATE.to_dict()
             
@@ -195,6 +227,14 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.push_state()
                 STATE.session = STATE.session_manager.load(Path(path))
                 STATE.undo_manager.push(STATE.session)
+                STATE.queue.shutdown()
+                STATE.queue = GenerationQueue(
+                    STATE.registry,
+                    output_root=STATE.session_manager.session_output_dir(),
+                    concurrency=STATE.session.global_settings.concurrency_limit,
+                    rpm=STATE.session.global_settings.rate_limit_rpm,
+                )
+                STATE.queue.register_listener(STATE._handle_event)
             return STATE.to_dict()
 
         if action == "undo":
@@ -216,11 +256,72 @@ class Handler(BaseHTTPRequestHandler):
             import uuid
             STATE.push_state()
             prompts: List[str] = data.get("prompts", [])
-            for prompt in prompts:
-                row = RowData(id=str(uuid.uuid4()), prompt=prompt)
-                STATE.session.rows.append(row)
+            rows_data: List[Dict[str, Any]] = data.get("rows", [])
+            if rows_data:
+                for item in rows_data:
+                    row = RowData(
+                        id=str(uuid.uuid4()),
+                        prompt=str(item.get("prompt", "")),
+                        prompt_id=str(item.get("prompt_id", "")),
+                        category_id=str(item.get("category_id", "")),
+                        source_metadata=item.get("source_metadata", {}),
+                    )
+                    STATE.session.rows.append(row)
+            else:
+                for prompt in prompts:
+                    row = RowData(id=str(uuid.uuid4()), prompt=prompt)
+                    STATE.session.rows.append(row)
             STATE.push_state()
             return {"rows": [r.to_dict() for r in STATE.session.rows]}
+
+        if action == "parse_batch":
+            result = parse_batch_input(
+                data.get("raw", ""),
+                mode=data.get("mode", "lines"),
+                prompt_field=data.get("prompt_field", "prompt"),
+                csv_column=data.get("csv_column", "prompt"),
+            )
+            return {
+                "prompts": result.prompts,
+                "errors": result.errors,
+                "rows": [row.__dict__ for row in result.rows],
+            }
+
+        if action == "import_batch":
+            import uuid
+            result = parse_batch_input(
+                data.get("raw", ""),
+                mode=data.get("mode", "lines"),
+                prompt_field=data.get("prompt_field", "prompt"),
+                csv_column=data.get("csv_column", "prompt"),
+            )
+            if result.errors and not result.rows:
+                return {"rows": [r.to_dict() for r in STATE.session.rows], "errors": result.errors}
+            STATE.push_state()
+            apply_mode = data.get("apply_mode", "append")
+            if apply_mode == "replace":
+                STATE.session.rows.clear()
+            pending_rows = list(result.rows)
+            if apply_mode == "fill":
+                empty_rows = [r for r in STATE.session.rows if not r.prompt]
+                for row, parsed in zip(empty_rows, pending_rows):
+                    row.prompt = parsed.prompt
+                    row.prompt_id = parsed.prompt_id
+                    row.category_id = parsed.category_id
+                    row.source_metadata = parsed.source_metadata
+                pending_rows = pending_rows[len(empty_rows):]
+            for parsed in pending_rows:
+                STATE.session.rows.append(
+                    RowData(
+                        id=str(uuid.uuid4()),
+                        prompt=parsed.prompt,
+                        prompt_id=parsed.prompt_id,
+                        category_id=parsed.category_id,
+                        source_metadata=parsed.source_metadata,
+                    )
+                )
+            STATE.push_state()
+            return {"rows": [r.to_dict() for r in STATE.session.rows], "errors": result.errors}
 
         if action == "update_row":
             # Don't push undo for every keystroke, handle debounce in frontend or specific commit action
@@ -232,6 +333,12 @@ class Handler(BaseHTTPRequestHandler):
             
             if "prompt" in data:
                 row.prompt = data["prompt"]
+            if "prompt_id" in data:
+                row.prompt_id = str(data["prompt_id"] or "")
+            if "category_id" in data:
+                row.category_id = str(data["category_id"] or "")
+            if "source_metadata" in data:
+                row.source_metadata = data.get("source_metadata") or {}
             if "selected" in data:
                 row.selected = bool(data["selected"])
             if "tags" in data:
@@ -282,12 +389,48 @@ class Handler(BaseHTTPRequestHandler):
                 if not row:
                     continue
                 row.status = RowStatus.QUEUED
-                STATE.queue.enqueue(row, STATE.session.global_settings)
+                STATE.queue.enqueue(
+                    row,
+                    STATE.session.global_settings,
+                    row_index=STATE.session.rows.index(row) + 1,
+                    missing_only=bool(data.get("missing_only", False)),
+                )
             return {"queued": ids}
+
+        if action == "generate_missing":
+            ids = data.get("row_ids") or [row.id for row in STATE.session.rows]
+            queued: List[str] = []
+            for rid in ids:
+                row = STATE._row_by_id(rid)
+                if not row:
+                    continue
+                has_success = any(Path(img.file_path).exists() for img in row.images)
+                if not has_success:
+                    row.status = RowStatus.QUEUED
+                    queued.append(row.id)
+                STATE.queue.enqueue(row, STATE.session.global_settings, row_index=STATE.session.rows.index(row) + 1, missing_only=True)
+            return {"queued": queued}
+
+        if action == "retry_failed":
+            ids = data.get("row_ids") or [row.id for row in STATE.session.rows if row.status in {RowStatus.ERROR, RowStatus.FILTERED}]
+            queued: List[str] = []
+            for rid in ids:
+                row = STATE._row_by_id(rid)
+                if not row or row.status not in {RowStatus.ERROR, RowStatus.FILTERED}:
+                    continue
+                row.status = RowStatus.QUEUED
+                row.error_message = ""
+                queued.append(row.id)
+                STATE.queue.enqueue(row, STATE.session.global_settings, row_index=STATE.session.rows.index(row) + 1)
+            return {"queued": queued}
 
         if action == "stop_all":
             STATE.queue.cancel_all()
             return {"stopped": True}
+
+        if action == "stop_after_current":
+            STATE.queue.stop_after_current()
+            return {"stopped_after_current": True}
 
         # --- Global Settings ---
         if action == "global_settings":
@@ -309,6 +452,45 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.queue.register_listener(STATE._handle_event)
             STATE.push_state()
             return gs.to_dict()
+
+        if action == "apply_azure_logo_preset":
+            STATE.push_state()
+            gs = apply_azure_logo_preset(STATE.session.global_settings)
+            STATE.queue.rate_limiter.set_rpm(gs.rate_limit_rpm)
+            if STATE.queue.concurrency != gs.concurrency_limit:
+                STATE.queue.shutdown()
+                STATE.queue = GenerationQueue(
+                    STATE.registry,
+                    STATE.session_manager.session_output_dir(),
+                    gs.concurrency_limit,
+                    gs.rate_limit_rpm,
+                )
+                STATE.queue.register_listener(STATE._handle_event)
+            STATE.push_state()
+            return gs.to_dict()
+
+        if action == "provider_status":
+            azure_missing = []
+            for key in ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_GPT_IMAGE_2_DEPLOYMENT"):
+                if not os.environ.get(key):
+                    azure_missing.append(key)
+            return {
+                "azure_openai": {
+                    "configured": not azure_missing,
+                    "missing": azure_missing,
+                    "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+                    "deployment": os.environ.get("AZURE_GPT_IMAGE_2_DEPLOYMENT", ""),
+                    "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", "preview"),
+                },
+                "azure_logo_wrapper": AZURE_LOGO_PROMPT_WRAPPER,
+            }
+
+        if action == "verify_batch":
+            return verify_rows(STATE.session.rows)
+
+        if action == "generation_log":
+            log_path = STATE.session_manager.session_output_dir().parent / "generation_log.jsonl"
+            return {"rows": read_generation_log(log_path), "path": str(log_path)}
 
         if action == "select_image_file":
             from PySide6.QtWidgets import QApplication, QFileDialog
