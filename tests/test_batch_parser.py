@@ -26,3 +26,8 @@ def test_parse_json_lines_error():
     result = parse_batch_input(payload, mode="json_lines", prompt_field="prompt")
     assert result.prompts == ["a"]
     assert result.errors
+
+
+def test_parse_lines_appends_extra_prompt_text():
+    result = parse_batch_input("hello\nworld", mode="lines", prompt_append="extra instruction")
+    assert result.prompts == ["hello\n\nextra instruction", "world\n\nextra instruction"]

@@ -37,6 +37,11 @@ class BatchInputDialog(QtWidgets.QDialog):
         self.text_edit = QtWidgets.QTextEdit()
         layout.addWidget(self.text_edit)
 
+        layout.addWidget(QtWidgets.QLabel("Append to every parsed prompt"))
+        self.prompt_append_edit = QtWidgets.QTextEdit()
+        self.prompt_append_edit.setFixedHeight(70)
+        layout.addWidget(self.prompt_append_edit)
+
         self.preview_btn = QtWidgets.QPushButton("Preview")
         self.preview_btn.clicked.connect(self._on_preview)
         layout.addWidget(self.preview_btn)
@@ -71,6 +76,7 @@ class BatchInputDialog(QtWidgets.QDialog):
             mode=mode,
             prompt_field=prompt_field,
             csv_column=csv_col,
+            prompt_append=self.prompt_append_edit.toPlainText(),
         )
         self.prompts = result.prompts
         self.errors = result.errors

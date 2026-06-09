@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from io import StringIO
 from typing import Dict, List, Optional
 
+from app.prompt_append import append_prompt_text
+
 
 @dataclass
 class BatchPromptRow:
@@ -24,13 +26,17 @@ class BatchParseResult:
 
 
 def parse_batch_input(
-    raw: str, mode: str = "lines", prompt_field: str = "prompt", csv_column: Optional[str] = None
+    raw: str,
+    mode: str = "lines",
+    prompt_field: str = "prompt",
+    csv_column: Optional[str] = None,
+    prompt_append: str = "",
 ) -> BatchParseResult:
     raw = raw.strip()
     if not raw:
         return BatchParseResult(prompts=[], errors=["Input is empty"])
     if mode == "lines":
-        prompts = [line.strip() for line in raw.splitlines() if line.strip()]
+        prompts = [append_prompt_text(line, prompt_append) for line in raw.splitlines() if line.strip()]
         return BatchParseResult(prompts=prompts, errors=[], rows=[BatchPromptRow(prompt=p) for p in prompts])
     if mode == "numbered":
         prompts: List[str] = []
@@ -40,7 +46,7 @@ def parse_batch_input(
                 continue
             match = re.match(r"^\s*\d+\s*[\.\)\-]\s*(.+)$", line)
             if match:
-                prompts.append(match.group(1).strip())
+                prompts.append(append_prompt_text(match.group(1), prompt_append))
             else:
                 errors.append(f"Could not parse numbered line: {line}")
         return BatchParseResult(prompts=prompts, errors=errors, rows=[BatchPromptRow(prompt=p) for p in prompts])
@@ -55,12 +61,13 @@ def parse_batch_input(
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, str):
-                    prompts.append(item)
-                    rows_out.append(BatchPromptRow(prompt=item))
-                elif isinstance(item, dict) and prompt_field in item:
-                    prompt = str(item[prompt_field])
+                    prompt = append_prompt_text(item, prompt_append)
                     prompts.append(prompt)
-                    rows_out.append(_row_from_mapping(item, prompt_field, prompt))
+                    rows_out.append(BatchPromptRow(prompt=prompt))
+                elif isinstance(item, dict) and prompt_field in item:
+                    prompt = append_prompt_text(str(item[prompt_field]), prompt_append)
+                    prompts.append(prompt)
+                    rows_out.append(_row_from_mapping(item, prompt_field, prompt, prompt_append=prompt_append))
                 else:
                     errors.append(f"Unsupported item: {item}")
         else:
@@ -79,9 +86,9 @@ def parse_batch_input(
                 errors.append(f"Line {idx}: {exc}")
                 continue
             if isinstance(obj, dict) and prompt_field in obj:
-                prompt = str(obj[prompt_field])
+                prompt = append_prompt_text(str(obj[prompt_field]), prompt_append)
                 prompts.append(prompt)
-                rows_out.append(_row_from_mapping(obj, prompt_field, prompt))
+                rows_out.append(_row_from_mapping(obj, prompt_field, prompt, prompt_append=prompt_append))
             else:
                 errors.append(f"Line {idx}: missing '{prompt_field}'")
         return BatchParseResult(prompts=prompts, errors=errors, rows=rows_out)
@@ -111,20 +118,24 @@ def parse_batch_input(
                     continue
                 value = row[col_idx].strip()
                 if value:
-                    prompts.append(value)
+                    prompt = append_prompt_text(value, prompt_append)
+                    prompts.append(prompt)
                     if has_header:
                         mapping = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
-                        rows_out.append(_row_from_mapping(mapping, csv_column or "prompt", value))
+                        rows_out.append(_row_from_mapping(mapping, csv_column or "prompt", prompt, prompt_append=prompt_append))
                     else:
-                        rows_out.append(BatchPromptRow(prompt=value))
+                        rows_out.append(BatchPromptRow(prompt=prompt))
         except Exception as exc:
             errors.append(f"CSV parse error: {exc}")
         return BatchParseResult(prompts=prompts, errors=errors, rows=rows_out)
     return BatchParseResult(prompts=[], errors=[f"Unknown mode {mode}"])
 
 
-def _row_from_mapping(mapping: Dict, prompt_field: str, prompt: str) -> BatchPromptRow:
+def _row_from_mapping(mapping: Dict, prompt_field: str, prompt: str, *, prompt_append: str = "") -> BatchPromptRow:
     source_metadata = {str(k): str(v) for k, v in mapping.items() if k != prompt_field}
+    if prompt_append.strip():
+        source_metadata["base_prompt"] = str(mapping.get(prompt_field, ""))
+        source_metadata["prompt_append"] = prompt_append.strip()
     return BatchPromptRow(
         prompt=prompt,
         prompt_id=str(mapping.get("prompt_id", "") or mapping.get("id", "") or ""),

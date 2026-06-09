@@ -280,6 +280,7 @@ class Handler(BaseHTTPRequestHandler):
                 mode=data.get("mode", "lines"),
                 prompt_field=data.get("prompt_field", "prompt"),
                 csv_column=data.get("csv_column", "prompt"),
+                prompt_append=data.get("prompt_append", ""),
             )
             return {
                 "prompts": result.prompts,
@@ -294,6 +295,7 @@ class Handler(BaseHTTPRequestHandler):
                 mode=data.get("mode", "lines"),
                 prompt_field=data.get("prompt_field", "prompt"),
                 csv_column=data.get("csv_column", "prompt"),
+                prompt_append=data.get("prompt_append", ""),
             )
             if result.errors and not result.rows:
                 return {"rows": [r.to_dict() for r in STATE.session.rows], "errors": result.errors}

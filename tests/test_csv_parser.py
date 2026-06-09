@@ -21,3 +21,12 @@ def test_parse_structured_csv_metadata():
     assert result.rows[0].prompt_id == "prompt0001"
     assert result.rows[0].category_id == "cat01"
     assert result.rows[0].source_metadata["notes"] == "first"
+
+
+def test_parse_structured_csv_appends_prompt_text_and_keeps_base_prompt():
+    raw = "prompt_id,category_id,prompt\nprompt0001,cat01,Design logo"
+    result = parse_batch_input(raw, mode="csv", csv_column="prompt", prompt_append="Use a white background.")
+    assert result.prompts == ["Design logo\n\nUse a white background."]
+    assert result.rows[0].prompt == "Design logo\n\nUse a white background."
+    assert result.rows[0].source_metadata["base_prompt"] == "Design logo"
+    assert result.rows[0].source_metadata["prompt_append"] == "Use a white background."

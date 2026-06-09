@@ -7,6 +7,7 @@ The app can run fully offline with the mock provider. Real generation providers 
 ## Features
 
 - Batch prompt input from plain text, numbered lists, JSON arrays, JSON Lines, or CSV.
+- Optional shared text appended to every imported batch prompt.
 - Per-row prompt, provider, model, size, count, style, negative prompt, seed, quality, and safety overrides.
 - Global generation settings that can be applied to selected rows.
 - Queue management with concurrency limits, rate limiting, cancellation, and progress state.
@@ -47,6 +48,12 @@ AZURE_OPENAI_API_VERSION=preview
 ```
 
 Without provider keys, use the mock provider to exercise the UI and queueing flow.
+
+## Batch Prompt Append
+
+Batch imports can append the same extra instruction to every parsed prompt. This is useful when a whole CSV, JSONL file, or pasted list needs a shared context or constraint without editing every source row.
+
+In the PySide batch dialog, fill **Append to every parsed prompt** before previewing/applying. The backend `parse_batch` and `import_batch` actions accept the same value as `prompt_append`.
 
 ## Azure GPT-Image-2 Logo Batch Workflow
 
